@@ -1,0 +1,25 @@
+{
+  "name": "googley",
+  "version": "1.0.0",
+  "description": "Slack bot for accessing Google drive",
+  "main": "googley.js",
+  "dependencies": {
+    "botkit": "^0.2.2",
+    "googleapis": "^12.1.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tmillner/slackbots/"
+  },
+  "keywords": [
+    "slack",
+    "google",
+    "drive"
+  ],
+  "author": "",
+  "license": "ISC"
+}
