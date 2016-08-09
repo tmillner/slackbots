@@ -5,6 +5,7 @@
   "main": "googley.js",
   "dependencies": {
     "botkit": "^0.2.2",
+    "google-auth-library": "^0.9.8",
     "googleapis": "^12.1.0"
   },
   "devDependencies": {},
