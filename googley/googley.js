@@ -55,7 +55,10 @@ https.get('https://www.googleapis.com/drive/v2/files?access_token=' + google_tok
 });
 
 controller.hears(['files updated today'], 'direct_message,direct_mention,mention', function(bot, message) {
-    
+    /*
+    result.items.forEach.modifiedDate
+    "modifiedDate":"2016-08-03T04:54:52.765Z",
+    */
 });
 
 controller.hears(['files uploaded today'], 'direct_message,direct_mention,mention', function(bot, message) {
@@ -69,4 +72,10 @@ controller.hears(['all files in'], 'direct_message,direct_mention,mention', func
 controller.hears(['all folders'], 'direct_message,direct_mention,mention', function(bot, message) {
     
 });
+
+var slackDateTerm = function(dateQuery) {
+    if dateQuery.find("today") {
+        currentDateTime = new Date().toISOString();
+    }
+}
 
