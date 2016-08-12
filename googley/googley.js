@@ -22,6 +22,9 @@ var bot = controller.spawn({
 
 var google_token = process.env.google_token;
 
+
+
+
 controller.hears(['hello', 'hi'], 'direct_message,direct_mention,mention', function(bot, message) {
 
     bot.api.reactions.add({
@@ -34,17 +37,6 @@ controller.hears(['hello', 'hi'], 'direct_message,direct_mention,mention', funct
         }
     });
 
-var options = {
-  host: 'https://www.googleapis.com/drive/v2',
-  path: '/files'
-};
-
-https.get('https://www.googleapis.com/drive/v2/files?access_token=' + google_token, function(res) {
-  console.log("Google API response: " + res.statusCode);
-}).on('error', function(e) {
-  console.log("Google API  error: " + e.message);
-});
-
     controller.storage.users.get(message.user, function(err, user) {
         if (user && user.name) {
             bot.reply(message, 'Hello ' + user.name + '!!');
@@ -54,11 +46,87 @@ https.get('https://www.googleapis.com/drive/v2/files?access_token=' + google_tok
     });
 });
 
-controller.hears(['files updated today'], 'direct_message,direct_mention,mention', function(bot, message) {
-    /*
-    result.items.forEach.modifiedDate
-    "modifiedDate":"2016-08-03T04:54:52.765Z",
-    */
+function invokeGoogleDriveSearch() {
+    https.get('https://www.googleapis.com/drive/v2/files?access_token=' + google_token, function(res) {
+      console.log("Google API response: " + res.statusCode);
+      return res.body;
+    }).on('error', function(e) {
+      console.log("Google API  error: " + e.message);
+    });
+}
+
+function findUpdatedFiles(result, dateTerm) {
+    var hitDocuments = []
+    result.items.forEach(function(e,i,a){
+        console.log(e.modifiedDate);
+        if (e.modifiedDate > slackDateTerm(dateTerm)) {
+            hitDocuments.push({
+                "id": e.id, 
+                "name": e.title, 
+                "uploaded": e.createdDate,
+                "updated": e.modifiedDate,
+                "owner": e.ownerNames[0],
+                "link": e.alternateLink,
+                "parentFolder": e.parents[0].isRoot ? "" : e.parents[0].id
+                });
+        }
+    });
+    return hitDocuments;
+}
+
+function findParentFolders(resultScope, fileHits) {
+    
+}
+
+function slackDateTerm(dateTerm) {
+    var targetDate;
+    if (dateTerm.search("today") !== -1) {
+        targetDate = new Date(
+            new Date(
+                new Date(
+                    new Date(
+                        new Date().setUTCHours(0)
+                    ).setUTCMinutes(0)
+                ).setUTCSeconds(0)
+            ).setUTCMilliseconds(0)
+        ).toISOString();
+    }
+    return targetDate;
+}
+
+var queryTerms = ["today", "yesterday", "this week", "last week", "this month"];
+
+controller.hears(['files updated '], 'direct_message,direct_mention,mention', function(bot, message) {
+    var askFlavor = function(response, convo) {
+        var results = invokeGoogleDriveSearch();
+        var fileHits = findUpdatedFiles(results, "today");
+        var folderHits = findParentFolders(resultScope, fileHits);
+        convo.ask("Sure, here's all your folders with updated files today:\n" + 
+                "Which folder would you like to search?", function(response, convo) {
+        convo.say('Awesome.');
+        askSize(response, convo);
+        convo.next();
+        });
+    }
+    var askSize = function(response, convo) {
+      convo.ask('What size do you want?', function(response, convo) {
+        convo.say('Ok.')
+        askWhereDeliver(response, convo);
+        convo.next();
+      });
+    }
+    var askWhereDeliver = function(response, convo) {
+      convo.ask('So where do you want it delivered?', function(response, convo) {
+        convo.say('Ok! Good bye.');
+        convo.next();
+      });
+    }
+
+    if (queryTerms.find(function(item) {
+        return message.toLowerCase().search(item) !== -1;
+    }) !== undefined) {
+        bot.startConversation(message, askFlavor);
+    }
 });
 
 controller.hears(['files uploaded today'], 'direct_message,direct_mention,mention', function(bot, message) {
@@ -73,9 +141,4 @@ controller.hears(['all folders'], 'direct_message,direct_mention,mention', funct
     
 });
 
-var slackDateTerm = function(dateQuery) {
-    if dateQuery.find("today") {
-        currentDateTime = new Date().toISOString();
-    }
-}
 
