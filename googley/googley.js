@@ -23,43 +23,6 @@ var bot = controller.spawn({
 
 var google_token = process.env.google_token;
 
-controller.hears(['hello', 'hi'], 'direct_message,direct_mention,mention', function(bot, message) {
-
-    bot.api.reactions.add({
-        timestamp: message.ts,
-        channel: message.channel,
-        name: 'robot_face',
-    }, function(err, res) {
-        if (err) {
-            bot.botkit.log('Failed to add emoji reaction :(', err);
-        }
-    });
-
-    controller.storage.users.get(message.user, function(err, user) {
-        if (user && user.name) {
-            bot.reply(message, 'Hello ' + user.name + '!!');
-        } else {
-            bot.reply(message, 'Hello.');
-        }
-    });
-});
-
-function respond(bot, message, messageResponse) {
-    bot.api.reactions.add({
-        timestamp: message.ts,
-        channel: message.channel,
-        name: 'robot_face',
-    }, function(err, res) {
-        if (err) {
-            bot.botkit.log('Failed to add emoji reaction :(', err);
-        }
-    });
-
-    controller.storage.users.get(message.user, function(err, user) {
-        bot.reply(message, messageResponse);
-    });
-}
-
 
 function invokeGoogleDriveSearch() {
     return new Promise(function(res, rej) {
@@ -84,7 +47,8 @@ function invokeGoogleDriveSearch() {
     });
 }
 
-function findUpdatedFiles(resultScope, dateTerm) {
+function _findFilesBy(resultScope, dateTerm, by)
+{
     return new Promise(function(res, rej) {
         var hitDocuments = [];
         console.log("Result is " + resultScope);
@@ -93,8 +57,9 @@ function findUpdatedFiles(resultScope, dateTerm) {
         }
         try {
             resultScope.items.forEach(function(e,i,a){
-                console.log(e.modifiedDate);
-                if (e.modifiedDate > slackDateTerm(dateTerm)) {
+                console.log(e[by]);
+                if (e[by] >= slackDateTerm(dateTerm).start &&
+                    e[by] < slackDateTerm(dateTerm).end) {
                     var highestParent = e.parents.length - 1;
                     hitDocuments.push({
                         "id": e.id, 
@@ -117,6 +82,14 @@ function findUpdatedFiles(resultScope, dateTerm) {
             rej(e.message);
         }
     });
+}
+
+function findUploadedFiles(resultScope, dateTerm) {
+    return _findFilesBy(resultScope, dateTerm, "createdDate");
+}
+
+function findUpdatedFiles(resultScope, dateTerm) {
+    return _findFilesBy(resultScope, dateTerm, "modifiedDate");
 }
 
 function findParentFolders(resultScope, fileHits) {
@@ -169,31 +142,62 @@ function listFolderFiles(folder, fileHits) {
 }
 
 function slackDateTerm(dateTerm) {
-    var targetDate;
-    if (dateTerm.search("today") !== -1) {
-        targetDate = new Date(
+    var targetDate = {start: "", end: "" };
+    var todayStart = new Date(
+        new Date(
             new Date(
                 new Date(
-                    new Date(
-                        new Date().setUTCHours(0)
-                    ).setUTCMinutes(0)
-                ).setUTCSeconds(0)
-            ).setUTCMilliseconds(0)
-        ).toISOString();
+                    new Date().setUTCHours(0)
+                ).setUTCMinutes(0)
+            ).setUTCSeconds(0)
+        ).setUTCMilliseconds(0)
+    );
+    var todayEnd = new Date(new Date(todayStart).setDate(todayStart.getDate() +1));
+
+    if (dateTerm.toLowerCase().search("today") !== -1) {
+        targetDate.start = todayStart;
+        targetDate.end = todayEnd;
+    }
+    else if (dateTerm.toLowerCase().search("yesterday") !== -1) {
+        targetDate.start = new Date(new Date(todayStart).setDate(todayStart.getDate() -1));
+        targetDate.end = new Date(new Date(todayEnd).setDate(todayEnd.getDate() -1));
+    }
+    else if (dateTerm.toLowerCase().search("week") !== -1) {
+        var thisWeekStart = todayStart;
+        for (var i=7; i>0; i--) {
+            if (thisWeekStart.toString().toLowerCase().search("sun") === -1) {
+                thisWeekStart.setDate(thisWeekStart.getDate() -1);
+            }
+            else {
+                break;
+            }
+        }
+        // Return this week
+        targetDate.start = thisWeekStart;
+        targetDate.end = todayEnd;
+
+        if (dateTerm.toLowerCase().search("last") !== -1) {
+            var lastWeekEnd = thisWeekStart;
+            targetDate.start = thisWeekStart.setDate(thisWeekStart.getDate() - 7);
+            targetDate.end = lastWeekEnd;
+        }
+    }
+    else if (dateTerm.toLowerCase().search("this month") !== -1) {
+        targetDate.start = new Date(new Date(todayStart).setDate(1));
+        targetDate.end = todayEnd;
     }
     return targetDate;
 }
 
 var dateTerms = ["today", "yesterday", "this week", "last week", "this month"];
 
-controller.hears('files updated (.*)', 'direct_message,direct_mention,mention', function(bot, message) {
-    var dateTerm = message.match[1];
-    console.log("log time is " + dateTerm);
-    var askFlavor = function(err, convo) {
+
+var _askForFilesByFolder = function(findByFunction) {
+    return function(err, convo) {
 
         invokeGoogleDriveSearch().then(function(bodyPayload) {
             //console.log("from invoke google Search got " + bodyPayload);
-            return findUpdatedFiles(bodyPayload, dateTerm).then(function(fileHits){
+            return findByFunction(bodyPayload, dateTerm).then(function(fileHits){
                 console.log("found the file hits " + fileHits);
                 return findParentFolders(bodyPayload, fileHits).then(function(folderHits) {
                     // When this callbacks body does not fire, perhaps a variable is misspelled
@@ -225,16 +229,27 @@ controller.hears('files updated (.*)', 'direct_message,direct_mention,mention', 
             return failedBodyPayload;
         })
     }
-
+}
+controller.hears('files updated (.*)', 'direct_message,direct_mention,mention', function(bot, message) {
+    var dateTerm = message.match[1];
+    console.log("log time is " + dateTerm);
+    
     if (dateTerms.find(function(item) {
         return dateTerm.toLowerCase().search(item.toLowerCase()) !== -1;
     }) !== undefined) {
-        bot.startConversation(message, askFlavor);
+        bot.startConversation(message, _askForFilesByFolder(findUpdatedFiles));
     }
 });
 
-controller.hears(['files uploaded today'], 'direct_message,direct_mention,mention', function(bot, message) {
+controller.hears(['files uploaded (.*)'], 'direct_message,direct_mention,mention', function(bot, message) {
+    var dateTerm = message.match[1];
+    console.log("log time is " + dateTerm);
     
+    if (dateTerms.find(function(item) {
+        return dateTerm.toLowerCase().search(item.toLowerCase()) !== -1;
+    }) !== undefined) {
+        bot.startConversation(message, _askForFilesByFolder(findUploadedFiles));
+    }
 });
 
 controller.hears(['all files in'], 'direct_message,direct_mention,mention', function(bot, message) {
