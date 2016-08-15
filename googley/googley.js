@@ -12,6 +12,7 @@ var Botkit = require('botkit');
 var os = require('os');
 var https = require('https');
 var Promise = require('promise');
+var ROOT = "ROOT";
 
 var controller = Botkit.slackbot({
     debug: true
@@ -68,7 +69,8 @@ function _findFilesBy(resultScope, dateTerm, by)
                         "updated": e.modifiedDate,
                         "owner": e.ownerNames[0],
                         "link": e.alternateLink,
-                        "parentFolder": e.parents[0].isRoot ? "ROOT" : e.parents[highestParent].id,
+                        "parentFolder": e.parents[highestParent].isRoot 
+                        ? ROOT + e.parents[highestParent].id : e.parents[highestParent].id,
                         "toString": function() { return (e.title + " " + 
                                     e.createdDate + " " + 
                                     e.ownerNames[0] + " " +
@@ -85,10 +87,14 @@ function _findFilesBy(resultScope, dateTerm, by)
 }
 
 function findUploadedFiles(resultScope, dateTerm) {
+    console.log("about to find uploaded files!")
+    console.log(dateTerm)
     return _findFilesBy(resultScope, dateTerm, "createdDate");
 }
 
 function findUpdatedFiles(resultScope, dateTerm) {
+    console.log("about to find updated files!")
+        console.log(dateTerm)
     return _findFilesBy(resultScope, dateTerm, "modifiedDate");
 }
 
@@ -100,11 +106,11 @@ function findParentFolders(resultScope, fileHits) {
                 if (hitFolders.find(function(item) {
                     return e.parentFolder.search(item.id) !== -1;
                 }) === undefined) {
-                    if (e.parentFolder === "ROOT") {
+                    if (e.parentFolder.search(ROOT) === 0) {
                         hitFolders.push({
-                            "id": "ROOT", 
-                            "name": "ROOT", 
-                            "toString": function() { return ("ROOT")}
+                            "id": e.parentFolder.split(ROOT)[1], 
+                            "name": ROOT, 
+                            "toString": function() { return (ROOT)}
                         });
                     }
                     else {
@@ -154,6 +160,7 @@ function slackDateTerm(dateTerm) {
     );
     var todayEnd = new Date(new Date(todayStart).setDate(todayStart.getDate() +1));
 
+    console.log("about to find date term " + dateTerm);
     if (dateTerm.toLowerCase().search("today") !== -1) {
         targetDate.start = todayStart;
         targetDate.end = todayEnd;
@@ -186,13 +193,17 @@ function slackDateTerm(dateTerm) {
         targetDate.start = new Date(new Date(todayStart).setDate(1));
         targetDate.end = todayEnd;
     }
+    else if (dateTerm.toLowerCase().search("all") !== -1) {
+        targetDate.start = new Date(new Date().setYear(1900))
+        targetDate.end = todayEnd;
+    }
     return targetDate;
 }
 
 var dateTerms = ["today", "yesterday", "this week", "last week", "this month"];
 
 
-var _askForFilesByFolder = function(findByFunction) {
+var _askForFilesAttribute = function(findByFunction, dateTerm) {
     return function(err, convo) {
 
         invokeGoogleDriveSearch().then(function(bodyPayload) {
@@ -206,7 +217,7 @@ var _askForFilesByFolder = function(findByFunction) {
                         return convo.say("There were no files found " + dateTerm);
                     }
                     console.log("final result " + folderHits);
-                    convo.ask("Sure, here's all your folders with updated files today:\n" + 
+                    convo.ask("Sure, here's all your folders with matching files " + dateTerm + ":\n" + 
                             folderHits +
                             "\nWhich folder would you like to search?", function(response, convo) {
                         var targetFolder = folderHits.find(function(folder) {
@@ -230,6 +241,61 @@ var _askForFilesByFolder = function(findByFunction) {
         })
     }
 }
+
+var _askForFilesFolder = function(findByFunction, dateTerm, folder) {
+    return function(err, convo) {
+
+        invokeGoogleDriveSearch().then(function(bodyPayload) {
+            //console.log("from invoke google Search got " + bodyPayload);
+            return findByFunction(bodyPayload, dateTerm).then(function(fileHits){
+                console.log("found the file hits " + fileHits);
+                return findParentFolders(bodyPayload, fileHits).then(function(folderHits) {
+                    if (!folderHits || folderHits == "") {
+                        return convo.say("There were no files found " + dateTerm);
+                    }
+                    console.log("final result " + folderHits);
+                    // All files in (folder)
+                    if (folder !== undefined && folder !== "") {
+                        var targetFolder = folderHits.find(function(f) {
+                            return f.name.toLowerCase().search(folder.toLowerCase()) !== -1
+                        });
+                        if (targetFolder === undefined) {
+                            convo.g("Sorry I didn't find the folder " + folder);
+                        }
+                        else {
+                            convo.say("Sure, here's all your folders in: " + folder + "\n" + 
+                                listFolderFiles(targetFolder, fileHits));
+                        }
+                        convo.next();
+                    }
+                    // All folders
+                    else {
+                        convo.ask("Sure, here's all your folders:\n" + folderHits +
+                            "\nJust type the name of the one you want to search", function(response, convo) {
+                            var targetFolder = folderHits.find(function(f) {
+                                return f.name.toLowerCase().search(response.text.toLowerCase()) !== -1
+                            });
+                            if (targetFolder === undefined) {
+                                convo.say("Sorry I didn't find the folder " + response.text);
+                            }
+                            else {
+                                convo.say("Great, here's all the files in "+ response.text + "\n" +
+                                    listFolderFiles(targetFolder, fileHits));
+                            }
+                            convo.next();
+                        });
+                    }
+                }, function(failedFolders) {
+                    console.log("Failed to find matching Folders :( " + failedFolders);
+                });
+            }, function(fail) {console.log("FAILED " + fail)});
+        }, function(failedBodyPayload) {
+            console.log("Failed invoke google search " + failedBodyPayload);
+            return failedBodyPayload;
+        })
+    }
+}
+
 controller.hears('files updated (.*)', 'direct_message,direct_mention,mention', function(bot, message) {
     var dateTerm = message.match[1];
     console.log("log time is " + dateTerm);
@@ -237,7 +303,8 @@ controller.hears('files updated (.*)', 'direct_message,direct_mention,mention', 
     if (dateTerms.find(function(item) {
         return dateTerm.toLowerCase().search(item.toLowerCase()) !== -1;
     }) !== undefined) {
-        bot.startConversation(message, _askForFilesByFolder(findUpdatedFiles));
+        console.log('starting');
+        bot.startConversation(message, _askForFilesAttribute(findUpdatedFiles, dateTerm));
     }
 });
 
@@ -248,16 +315,18 @@ controller.hears(['files uploaded (.*)'], 'direct_message,direct_mention,mention
     if (dateTerms.find(function(item) {
         return dateTerm.toLowerCase().search(item.toLowerCase()) !== -1;
     }) !== undefined) {
-        bot.startConversation(message, _askForFilesByFolder(findUploadedFiles));
+        bot.startConversation(message, _askForFilesAttribute(findUploadedFiles, dateTerm));
     }
 });
 
-controller.hears(['all files in'], 'direct_message,direct_mention,mention', function(bot, message) {
-    
+controller.hears(['all files in (.*)'], 'direct_message,direct_mention,mention', function(bot, message) {
+    var folder = message.match[1];
+    console.log("folder is " + folder);
+    bot.startConversation(message, _askForFilesFolder(findUploadedFiles, "all", folder));
 });
 
 controller.hears(['all folders'], 'direct_message,direct_mention,mention', function(bot, message) {
-    
+    bot.startConversation(message, _askForFilesFolder(findUploadedFiles, "all", ""));
 });
 
 
